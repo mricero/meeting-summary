@@ -1,38 +1,86 @@
 import os
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
+from datetime import datetime
+from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.document_loaders import PyMuPDFLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-class NotebookEngine:
-    def __init__(self):
-        self.embeddings = None
-        self.db_path = "vector_db"
+class RAGEngine:
+    def __init__(self, course_manager):
+        self.cm = course_manager
+        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-    def _init_embeddings(self):
-        """Lazy load the embedding model only when needed."""
-        if self.embeddings is None:
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name="all-MiniLM-L6-v2",
-                model_kwargs={'device': 'cuda'}
+    def get_db(self, course_name):
+        db_path = self.cm.get_course_db_path(course_name)
+        return Chroma(persist_directory=db_path, embedding_function=self.embeddings)
+
+    def ingest_document(self, file_path, course_name, log_callback):
+        try:
+            log_callback(f"[*] Tokenizing {os.path.basename(file_path)}...")
+            if file_path.endswith(".pdf"):
+                loader = PyMuPDFLoader(file_path)
+            else:
+                loader = TextLoader(file_path, encoding="utf-8")
+                
+            docs = loader.load()
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            chunks = splitter.split_documents(docs)
+            
+            db = self.get_db(course_name)
+            db.add_documents(chunks)
+            log_callback(f"[+] Knowledge added to {course_name} database.")
+        except Exception as e:
+            log_callback(f"[-] RAG Tokenization Error: {e}")
+
+    # --- NOW ACCEPTS DYNAMIC MODEL_NAME ---
+    def ingest_image_via_gemini(self, image_path, course_name, api_key, model_name, log_callback):
+        if not api_key:
+            log_callback("[-] Error: Gemini API Key required for Image/Graph Extraction.")
+            return
+
+        log_callback(f"[*] Sending visual data to {model_name}...")
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            myfile = client.files.upload(file=image_path)
+            
+            prompt = (
+                "You are an expert data analyst and transcriber. Look at this image. "
+                "1. If it contains handwriting, transcribe it perfectly. "
+                "2. If it is a graph or chart, extract the data points, describe the axes, and explain the overall trend. "
+                "3. If it contains math formulas, write them out in LaTeX. "
+                "Format the entire response in clean Markdown."
             )
+            response = client.models.generate_content(model=model_name, contents=[myfile, prompt])
+            
+            safe_course = course_name.replace(" ", "_").lower()
+            md_path = os.path.join(self.cm.courses_dir, safe_course, "raw_files", f"Extracted_{os.path.basename(image_path)}.md")
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(response.text)
+                
+            self.ingest_document(md_path, course_name, log_callback)
+            
+        except Exception as e:
+            log_callback(f"[-] Vision Error: {e}")
 
-    def ingest_pdf(self, pdf_path, log_callback):
-        self._init_embeddings()
-        log_callback(f"[*] Chunking PDF: {os.path.basename(pdf_path)}")
+    def ingest_chat_exchange(self, course_name, user_query, ai_response, log_callback):
+        safe_course = course_name.replace(" ", "_").lower()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        chat_dir = os.path.join(self.cm.courses_dir, safe_course, "chat_logs")
         
-        loader = PyPDFLoader(pdf_path)
-        documents = loader.load()
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
-        chunks = text_splitter.split_documents(documents)
-        
-        Chroma.from_documents(chunks, self.embeddings, persist_directory=self.db_path)
-        log_callback(f"[+] Notebook updated with {len(chunks)} fragments.")
+        md_path = os.path.join(chat_dir, f"chat_{timestamp}.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(f"# Chat Log\n**User:** {user_query}\n\n**Tutor:** {ai_response}\n")
+            
+        try:
+            loader = TextLoader(md_path, encoding="utf-8")
+            docs = loader.load()
+            db = self.get_db(course_name)
+            db.add_documents(docs)
+        except Exception as e:
+            log_callback(f"[-] Error saving chat to memory: {e}")
 
-    def query_context(self, query):
-        if not os.path.exists(self.db_path):
-            return ""
-        self._init_embeddings()
-        db = Chroma(persist_directory=self.db_path, embedding_function=self.embeddings)
-        docs = db.similarity_search(query, k=4)
-        return "\n\n".join([d.page_content for d in docs])
+    def query_course(self, query, course_name):
+        db = self.get_db(course_name)
+        results = db.similarity_search(query, k=5)
+        return "\n\n".join([doc.page_content for doc in results])
