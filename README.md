@@ -144,5 +144,3 @@ By utilizing the offline Whisper transcription engine, local embedding generatio
 
 ---
 
-## 🤝 Contribution & License
-Kurt is an ever-evolving project aimed at enhancing local AI utility. Contributions, pull requests, and bug reports are heavily encouraged. Please refer to the standard MIT License for usage and distribution guidelines. 
