@@ -3,12 +3,18 @@ import os
 import re
 import time
 from datetime import datetime
+from llm_providers import LLMConfig, LLMProviderFactory
 
 class LLMCompiler:
     def __init__(self, log_callback):
         self.log = log_callback
         self.tectonic_path = os.path.join("engines", "tectonic.exe")
         
+        # LLM Configuration - will be set via set_llm_config
+        self.llm_config: LLMConfig = None
+        self.provider = None
+        
+        # Legacy fields for backward compatibility
         self.engine = "ollama" 
         self.api_key = ""
         self.active_model = "llama3.2" 
@@ -22,6 +28,19 @@ class LLMCompiler:
         self.active_elements = []
         self.custom_header = ""
         self.custom_watermark = ""
+
+    def set_llm_config(self, llm_config: LLMConfig):
+        """Set the LLM configuration and create provider instance"""
+        self.llm_config = llm_config
+        self.provider = LLMProviderFactory.create(llm_config, self.log)
+        
+        # Update legacy fields for backward compatibility
+        self.engine = llm_config.provider
+        self.api_key = llm_config.api_key
+        self.active_model = llm_config.model
+        self.context_length = llm_config.context_length
+        self.keep_alive = llm_config.keep_alive
+        self.temperature = llm_config.temperature
 
     def _get_god_mode_preamble(self, mode="meeting"):
         title_text = self.custom_header if self.custom_header else ("Meeting Summary" if mode == "meeting" else "Class / Lecture Notes")
@@ -72,14 +91,53 @@ class LLMCompiler:
         else:
             user_prompt += "You are writing a CORPORATE MEETING SUMMARY. You MUST strictly use these exact headers: \n\\section*{Executive Summary} \n\\section*{Key Discussion Points} \n\\section*{Action Items} (Must be a table). "
 
-        self.log(f"[*] Querying {self.engine.upper()} ({self.active_model}) in {mode.upper()} mode...")
+        # Use new provider system if configured, fallback to legacy
+        if self.provider and self.llm_config:
+            provider_name = self.llm_config.provider
+            model_name = self.llm_config.model
+        else:
+            provider_name = self.engine
+            model_name = self.active_model
+            
+        self.log(f"[*] Querying {provider_name.upper()} ({model_name}) in {mode.upper()} mode...")
         
         try:
             full_text = ""
             tps_string = "Speed: N/A"
             start_time = time.time()
 
-            if self.engine == "gemini":
+            if self.provider:
+                # Use new unified provider system
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                
+                # Configure generation parameters
+                kwargs = {
+                    "temperature": float(self.temperature),
+                    "enable_search": self.enable_web_search and provider_name.lower() == "gemini"
+                }
+                
+                # Provider-specific parameters
+                if provider_name.lower() == "ollama":
+                    kwargs["num_ctx"] = self.context_length
+                    kwargs["keep_alive"] = self.keep_alive
+                elif provider_name.lower() in ["openai", "anthropic", "custom"]:
+                    kwargs["max_tokens"] = self.llm_config.max_tokens if self.llm_config else 8192
+                
+                full_text = self.provider.generate(messages, **kwargs)
+                
+                elapsed = time.time() - start_time
+                # Try to get token info from last response
+                if hasattr(self.provider, '_last_response') and self.provider._last_response:
+                    resp = self.provider._last_response
+                    if hasattr(resp, 'tokens_used') and resp.tokens_used and elapsed > 0:
+                        tps = resp.tokens_used / elapsed
+                        tps_string = f"Speed: {tps:.1f} t/s ({'API' if provider_name != 'ollama' else 'Local GPU'})"
+
+            elif provider_name == "gemini":
+                # Legacy Gemini support
                 from google import genai
                 from google.genai import types
                 client = genai.Client(api_key=self.api_key)
@@ -109,6 +167,7 @@ class LLMCompiler:
                     tps_string = f"Speed: {tps:.1f} t/s (API)"
 
             else:
+                # Legacy Ollama support
                 import ollama
                 response = ollama.chat(
                     model=self.active_model, 

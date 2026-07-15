@@ -211,6 +211,9 @@ class KurtApp(ctk.CTk):
         tabs = ctk.CTkTabview(frame, fg_color=self.C_CARD, segmented_button_selected_color=self.C_ACCENT)
         tabs.pack(fill="both", expand=True)
         tab_engine = tabs.add("🧠 Engine & API")
+        scroll_engine = ctk.CTkScrollableFrame(tab_engine, fg_color="transparent")
+        scroll_engine.pack(fill="both", expand=True)
+        tab_advanced = scroll_engine
         tab_ui = tabs.add("🎨 Customization")
         tab_data = tabs.add("🔒 Privacy")
 
@@ -221,20 +224,103 @@ class KurtApp(ctk.CTk):
             if description: ctk.CTkLabel(container, text=description, font=("Arial", 12), text_color=self.C_TEXT_MUTED).pack(anchor="w", pady=(0, 5))
             widget.pack(fill="x", expand=True, pady=(5,0))
 
-        # --- ENGINE TAB ---
-        ctk.CTkLabel(tab_engine, text="Active Intelligence Engine", font=("Arial", 22, "bold"), text_color=self.C_TEXT).pack(pady=(20,10), anchor="w", padx=40)
-        engine_box = ctk.CTkFrame(tab_engine, fg_color="transparent")
-        engine_box.pack(fill="x", padx=40, pady=5)
+        # Legacy backward compatibility mappings
         self.engine_var = ctk.StringVar(value="ollama")
-        ctk.CTkRadioButton(engine_box, text="Local Ollama (100% Private, Free)", variable=self.engine_var, value="ollama", font=("Arial", 14), text_color=self.C_TEXT, command=self.on_engine_change).pack(anchor="w", pady=10)
-        ctk.CTkRadioButton(engine_box, text="Google Gemini API (Cloud, High Speed Vision)", variable=self.engine_var, value="gemini", font=("Arial", 14), text_color=self.C_TEXT, command=self.on_engine_change).pack(anchor="w", pady=10)
+        self.entry_api = ctk.CTkEntry(self.screen_container)
         
-        self.gemini_frame = ctk.CTkFrame(tab_engine, fg_color="transparent")
-        self.entry_api = ctk.CTkEntry(self.gemini_frame, show="*", height=40, placeholder_text="AIzaSy...")
-        add_setting_stack(self.gemini_frame, "Gemini API Key:", self.entry_api, "Required for processing handwritten notes and connecting to Google Cloud.")
+        # --- LLM PROVIDERS TAB ---
+        ctk.CTkLabel(tab_advanced, text="LLM Provider Configuration", font=("Arial", 22, "bold"), text_color=self.C_TEXT).pack(pady=(20,10), anchor="w", padx=40)
+        ctk.CTkLabel(tab_advanced, text="Configure your LLM provider: Ollama, Gemini, or OpenRouter.", 
+                     font=("Arial", 12), text_color=self.C_TEXT_MUTED, wraplength=1000).pack(pady=(0, 15), anchor="w", padx=40)
         
-        self.chk_web_search = ctk.CTkCheckBox(self.gemini_frame, text="Enable Google Search Grounding (Gemini 1.5/2.0/2.5 Flash Models Only - 500 RPD Free)", variable=self.enable_web_search_var, font=("Arial", 14), text_color=self.C_TEXT)
-        add_setting_stack(self.gemini_frame, "Live Web Search:", self.chk_web_search, "Allows Kurt to browse the live internet for answers. Disabled automatically for Pro/Gemini-3 models.")
+        # Provider selection
+        self.provider_var = ctk.StringVar(value="ollama")
+        provider_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        provider_frame.pack(fill="x", padx=40, pady=10)
+        ctk.CTkLabel(provider_frame, text="Provider:", font=("Arial", 15, "bold"), text_color=self.C_TEXT).pack(anchor="w")
+        self.provider_combo = ctk.CTkComboBox(provider_frame, values=["ollama", "gemini", "openrouter", "openai", "anthropic", "custom"], variable=self.provider_var, height=40, command=self.on_provider_change)
+        self.provider_combo.pack(fill="x", pady=5)
+
+        # Model selection
+        self.model_var = ctk.StringVar(value="llama3.2")
+        self.model_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.model_frame.pack(fill="x", padx=40, pady=10)
+        ctk.CTkLabel(self.model_frame, text="Model:", font=("Arial", 15, "bold"), text_color=self.C_TEXT).pack(anchor="w")
+        self.model_combo = ctk.CTkComboBox(self.model_frame, values=["llama3.2"], variable=self.model_var, height=40, state="normal")
+        self.model_combo.pack(fill="x", pady=5)
+        self.btn_refresh_models = ctk.CTkButton(self.model_frame, text="🔄 Refresh Models", height=35, command=self.refresh_models)
+        self.btn_refresh_models.pack(pady=5)
+
+        # API Key
+        self.api_key_var = ctk.StringVar(value="")
+        self.api_key_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.api_key_frame.pack(fill="x", padx=40, pady=10)
+        ctk.CTkLabel(self.api_key_frame, text="API Key:", font=("Arial", 15, "bold"), text_color=self.C_TEXT).pack(anchor="w")
+        self.entry_api_key = ctk.CTkEntry(self.api_key_frame, textvariable=self.api_key_var, show="*", height=40, placeholder_text="Enter API key (leave empty for Ollama/local)")
+        self.entry_api_key.pack(fill="x", pady=5)
+
+        # Base URL (for custom providers)
+        self.base_url_var = ctk.StringVar(value="")
+        self.base_url_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.base_url_frame.pack(fill="x", padx=40, pady=10)
+        ctk.CTkLabel(self.base_url_frame, text="Base URL (Custom/OpenAI-compatible):", font=("Arial", 15, "bold"), text_color=self.C_TEXT).pack(anchor="w")
+        self.entry_base_url = ctk.CTkEntry(self.base_url_frame, textvariable=self.base_url_var, height=40, placeholder_text="https://api.openai.com/v1  or  http://localhost:1234/v1")
+        self.entry_base_url.pack(fill="x", pady=5)
+        ctk.CTkLabel(self.base_url_frame, text="Examples: OpenRouter=https://openrouter.ai/api/v1, Together=https://api.together.xyz/v1, Groq=https://api.groq.com/openai/v1, LM Studio=http://localhost:1234/v1", 
+                     font=("Arial", 11), text_color=self.C_TEXT_MUTED, wraplength=1000).pack(anchor="w", pady=2)
+
+        # Temperature
+        self.temp_var = ctk.DoubleVar(value=0.3)
+        self.temp_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.temp_frame.pack(fill="x", padx=40, pady=10)
+        self.lbl_temp = ctk.CTkLabel(self.temp_frame, text="Temperature: 0.30", font=("Arial", 15, "bold"), text_color=self.C_TEXT)
+        self.lbl_temp.pack(anchor="w")
+        self.slider_temp = ctk.CTkSlider(self.temp_frame, from_=0.0, to=2.0, variable=self.temp_var, command=lambda v: self.lbl_temp.configure(text=f"Temperature: {float(v):.2f}"))
+        self.slider_temp.pack(fill="x", pady=5)
+
+        # Max Tokens
+        self.max_tokens_var = ctk.IntVar(value=8192)
+        self.max_tokens_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.max_tokens_frame.pack(fill="x", padx=40, pady=10)
+        ctk.CTkLabel(self.max_tokens_frame, text="Max Tokens:", font=("Arial", 15, "bold"), text_color=self.C_TEXT).pack(anchor="w")
+        self.entry_max_tokens = ctk.CTkEntry(self.max_tokens_frame, textvariable=self.max_tokens_var, height=40, placeholder_text="8192")
+        self.entry_max_tokens.pack(fill="x", pady=5)
+
+        # Context Length (Ollama)
+        self.ctx_var = ctk.IntVar(value=4096)
+        self.ctx_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.ctx_frame.pack(fill="x", padx=40, pady=10)
+        ctk.CTkLabel(self.ctx_frame, text="Context Length (Ollama):", font=("Arial", 15, "bold"), text_color=self.C_TEXT).pack(anchor="w")
+        self.ctx_combo = ctk.CTkComboBox(self.ctx_frame, values=["4096", "8192", "16384", "32768", "65536", "131072"], variable=ctk.StringVar(value="4096"), height=40)
+        self.ctx_combo.pack(fill="x", pady=5)
+
+        # Keep Alive (Ollama)
+        self.keep_alive_var = ctk.StringVar(value="10m")
+        self.keep_alive_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.keep_alive_frame.pack(fill="x", padx=40, pady=10)
+        ctk.CTkLabel(self.keep_alive_frame, text="Keep Alive (Ollama):", font=("Arial", 15, "bold"), text_color=self.C_TEXT).pack(anchor="w")
+        self.keep_alive_combo = ctk.CTkComboBox(self.keep_alive_frame, values=["5m", "10m", "20m", "1h", "-1 (Unlimited)"], variable=self.keep_alive_var, height=40)
+        self.keep_alive_combo.pack(fill="x", pady=5)
+
+        # Web Search (Gemini)
+        self.web_search_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.web_search_frame.pack(fill="x", padx=40, pady=10)
+        self.chk_web_search_adv = ctk.CTkCheckBox(self.web_search_frame, text="Enable Web Search Grounding (Gemini Flash models only)", variable=self.enable_web_search_var, font=("Arial", 14), text_color=self.C_TEXT)
+        self.chk_web_search_adv.pack(anchor="w")
+
+        # Connection Test Button
+        self.conn_test_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.conn_test_frame.pack(fill="x", padx=40, pady=10)
+        self.btn_test_connection = ctk.CTkButton(self.conn_test_frame, text="🔍 Test Connection", height=40, command=self.test_connection, fg_color="#7C3AED", hover_color="#6D28D9")
+        self.btn_test_connection.pack(side="left", padx=5)
+        self.lbl_connection_status = ctk.CTkLabel(self.conn_test_frame, text="", font=("Arial", 12), text_color=self.C_TEXT_MUTED)
+        self.lbl_connection_status.pack(side="left", padx=10)
+
+        # Advanced Logs Toggle
+        self.log_frame = ctk.CTkFrame(tab_advanced, fg_color="transparent")
+        self.log_frame.pack(fill="x", padx=40, pady=10)
+        self.chk_detailed_logs = ctk.CTkCheckBox(self.log_frame, text="Enable Detailed API Logging", variable=ctk.BooleanVar(value=True), font=("Arial", 14), text_color=self.C_TEXT)
+        self.chk_detailed_logs.pack(anchor="w")
 
         # --- UI TAB ---
         ui_scroll = ctk.CTkScrollableFrame(tab_ui, fg_color="transparent")
@@ -274,6 +360,9 @@ class KurtApp(ctk.CTk):
         btn_save = self._create_accent_btn(frame, "Save All Settings", self.save_settings, height=50, font=("Arial", 16, "bold"))
         btn_save.pack(pady=20)
         self.frames["settings"] = frame
+        
+        # Initialize advanced provider UI state
+        self.on_provider_change(self.provider_var.get())
 
     def build_guest_screen(self):
         frame = ctk.CTkFrame(self.screen_container, fg_color="transparent")
@@ -407,7 +496,105 @@ class KurtApp(ctk.CTk):
             self.gemini_frame.pack_forget()
             self.scan_ollama()
 
+    # ==========================================
+    # ADVANCED PROVIDER METHODS
+    # ==========================================
+    def on_provider_change(self, provider_name):
+        """Handle provider selection change in advanced tab"""
+        # Show/hide provider-specific fields
+        is_ollama = provider_name == "ollama"
+        is_gemini = provider_name == "gemini"
+        is_openrouter = provider_name == "openrouter"
+        is_custom = provider_name == "custom"
+        
+        # API Key - always show but hint changes
+        if is_ollama:
+            self.entry_api_key.configure(placeholder_text="Not required for Ollama (local)")
+        elif is_openrouter:
+            self.entry_api_key.configure(placeholder_text="Enter OpenRouter API key")
+        else:
+            self.entry_api_key.configure(placeholder_text=f"Enter {provider_name.capitalize()} API key")
+        
+        # Base URL - for openrouter and custom
+        if is_openrouter:
+            self.base_url_frame.pack(fill="x", padx=40, pady=10, before=self.temp_frame)
+            if not self.base_url_var.get() or self.base_url_var.get() == "http://localhost:1234/v1":
+                self.base_url_var.set("https://openrouter.ai/api/v1")
+        elif is_custom:
+            self.base_url_frame.pack(fill="x", padx=40, pady=10, before=self.temp_frame)
+            if not self.base_url_var.get() or self.base_url_var.get() == "https://openrouter.ai/api/v1":
+                self.base_url_var.set("http://localhost:1234/v1")
+        else:
+            self.base_url_frame.pack_forget()
+        
+        # Context Length - only for Ollama
+        if is_ollama:
+            self.ctx_frame.pack(fill="x", padx=40, pady=10, before=self.keep_alive_frame)
+        else:
+            self.ctx_frame.pack_forget()
+        
+        # Keep Alive - only for Ollama
+        if is_ollama:
+            self.keep_alive_frame.pack(fill="x", padx=40, pady=10, before=self.web_search_frame)
+        else:
+            self.keep_alive_frame.pack_forget()
+        
+        # Web Search - only for Gemini
+        if is_gemini:
+            self.web_search_frame.pack(fill="x", padx=40, pady=10)
+        else:
+            self.web_search_frame.pack_forget()
+        
+        # Update default model for provider
+        self.update_model_list(provider_name)
+
+    def update_model_list(self, provider_name):
+        """Update model dropdown with provider-specific models"""
+        from llm_providers import LLMProviderFactory
+        models = LLMProviderFactory.get_default_models(provider_name)
+        self.model_combo.configure(values=models)
+        if models:
+            self.model_combo.set(models[0])
+
+    def refresh_models(self):
+        """Fetch available models from the provider API"""
+        provider = self.provider_var.get()
+        api_key = self.api_key_var.get()
+        base_url = self.base_url_var.get()
+        
+        self.btn_refresh_models.configure(text="🔄 Loading...", state="disabled")
+        self.log(f"[*] Fetching models from {provider}...")
+        
+        def fetch():
+            try:
+                from llm_providers import LLMProviderFactory, LLMConfig
+                config = LLMConfig(
+                    provider=provider,
+                    model=self.model_var.get(),
+                    api_key=api_key,
+                    base_url=base_url
+                )
+                provider_instance = LLMProviderFactory.create(config, self.log)
+                models = provider_instance.list_models()
+                
+                def update_ui():
+                    self.model_combo.configure(values=models)
+                    if models:
+                        self.model_combo.set(models[0])
+                    self.btn_refresh_models.configure(text="🔄 Refresh Models", state="normal")
+                    self.log(f"[+] Found {len(models)} models from {provider}")
+                
+                self.after(0, update_ui)
+            except Exception as e:
+                def show_error():
+                    self.btn_refresh_models.configure(text="🔄 Refresh Models", state="normal")
+                    self.log(f"[-] Failed to fetch models: {e}")
+                self.after(0, show_error)
+        
+        threading.Thread(target=fetch, daemon=True).start()
+
     def save_settings(self):
+        # Save legacy engine settings
         engine = self.engine_var.get()
         self.compiler.engine = engine
         self.compiler.api_key = self.entry_api.get()
@@ -418,6 +605,46 @@ class KurtApp(ctk.CTk):
         else:
             self.scan_ollama() 
             
+        # Save advanced provider settings
+        provider = self.provider_var.get()
+        model = self.model_var.get()
+        api_key = self.api_key_var.get()
+        base_url = self.base_url_var.get()
+        temperature = self.temp_var.get()
+        max_tokens = self.max_tokens_var.get()
+        context_length = int(self.ctx_combo.get())
+        keep_alive = self.keep_alive_var.get()
+        enable_web_search = self.enable_web_search_var.get()
+        
+        # Create LLMConfig for the compiler
+        from llm_providers import LLMConfig
+        llm_config = LLMConfig(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            context_length=context_length,
+            keep_alive=keep_alive
+        )
+        
+        # Set on compiler
+        self.compiler.set_llm_config(llm_config)
+        
+        # Also update legacy fields for backward compatibility
+        self.compiler.engine = provider
+        self.compiler.active_model = model
+        self.compiler.api_key = api_key
+        self.compiler.enable_web_search = enable_web_search
+        self.compiler.context_length = context_length
+        self.compiler.keep_alive = keep_alive
+        self.compiler.temperature = temperature
+        
+        # Update global model combo
+        self.combo_global_model.configure(values=[model], state="normal")
+        self.combo_global_model.set(model)
+        
         self.user_name = self.entry_name.get() or "User"
         self.bubble_radius = 5 if "Square" in self.bubble_var.get() else 15
         fs = self.font_var.get()
@@ -437,6 +664,49 @@ class KurtApp(ctk.CTk):
         self.log("[+] Settings applied.")
         self.refresh_home_dashboard()
         messagebox.showinfo("Saved", "All customizations applied!")
+
+    def test_connection(self):
+        """Test the API connection for the selected provider"""
+        provider = self.provider_var.get()
+        model = self.model_var.get()
+        api_key = self.api_key_var.get()
+        base_url = self.base_url_var.get()
+        
+        self.btn_test_connection.configure(text="🔄 Testing...", state="disabled")
+        self.lbl_connection_status.configure(text="Testing...", text_color="#F59E0B")
+        
+        def test():
+            try:
+                from llm_providers import LLMProviderFactory, LLMConfig
+                config = LLMConfig(
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url
+                )
+                provider_instance = LLMProviderFactory.create(config, self.log)
+                
+                # Test with a simple request
+                result = provider_instance.validate_connection()
+                
+                def update_ui():
+                    if result:
+                        self.lbl_connection_status.configure(text="✅ Connected!", text_color="#10B981")
+                        self.log(f"[+] Connection test successful for {provider}")
+                    else:
+                        self.lbl_connection_status.configure(text="❌ Failed", text_color="#EF4444")
+                        self.log(f"[-] Connection test failed for {provider}")
+                    self.btn_test_connection.configure(text="🔍 Test Connection", state="normal")
+                
+                self.after(0, update_ui)
+            except Exception as e:
+                def show_error():
+                    self.lbl_connection_status.configure(text=f"❌ Error: {str(e)[:50]}", text_color="#EF4444")
+                    self.log(f"[-] Connection test error: {e}")
+                    self.btn_test_connection.configure(text="🔍 Test Connection", state="normal")
+                self.after(0, show_error)
+        
+        threading.Thread(target=test, daemon=True).start()
 
     def scan_ollama(self):
         if self.compiler.engine == "gemini": return
@@ -557,18 +827,29 @@ class KurtApp(ctk.CTk):
     # ==========================================
     def render_chat_bubble(self, sender, text):
         is_user = (sender == self.user_name)
-        bg_color = self.C_USER_BUBBLE if is_user else self.C_AI_BUBBLE
-        display_name = self.user_name if is_user else "Kurt"
+        display_name = self.user_name if is_user else "Kurt (AI Tutor)"
         
         container = ctk.CTkFrame(self.chat_scroll, fg_color="transparent")
-        container.pack(fill="x", pady=10, padx=20)
+        container.pack(fill="x", pady=(15, 5), padx=20)
         
-        bubble = ctk.CTkFrame(container, fg_color=bg_color, corner_radius=self.bubble_radius)
-        bubble.pack(side="right" if is_user else "left", ipadx=15, ipady=10, fill="x", expand=False)
+        # Header (Name and Copy button)
+        header_frame = ctk.CTkFrame(container, fg_color="transparent")
+        header_frame.pack(fill="x")
+        ctk.CTkLabel(header_frame, text=display_name, font=("Arial", 12, "bold"), text_color=self.C_TEXT).pack(side="left", padx=5)
         
-        ctk.CTkLabel(bubble, text=display_name, font=("Arial", 11, "bold"), text_color=self.C_TEXT_MUTED).pack(anchor="w", padx=10, pady=(5,0))
+        def copy_text(t=text):
+            self.clipboard_clear()
+            self.clipboard_append(t)
+            
+        btn_copy = ctk.CTkButton(header_frame, text="📋 Copy", width=50, height=20, fg_color="transparent", hover_color=self.C_BG_RAIL, text_color=self.C_TEXT_MUTED, command=copy_text)
+        btn_copy.pack(side="right", padx=5)
 
-        blocks = re.split(r"(```.*?```)", text, flags=re.DOTALL)
+        # Content blocks
+        content_frame = ctk.CTkFrame(container, fg_color="transparent")
+        content_frame.pack(fill="x", pady=(5, 0), padx=5)
+
+        # Split by code blocks OR block math equations
+        blocks = re.split(r"(```.*?```|\\\[.*?\\\]|\$\$.*?\$\$)", text, flags=re.DOTALL)
         for block in blocks:
             if not block.strip(): continue
             if block.startswith("```") and block.endswith("```"):
@@ -576,11 +857,111 @@ class KurtApp(ctk.CTk):
                 if "\n" in code_content:
                     first_line, rest = code_content.split("\n", 1)
                     if len(first_line.split()) == 1: code_content = rest 
-                code_frame = ctk.CTkFrame(bubble, fg_color=self.C_CODE_BG, corner_radius=5)
-                code_frame.pack(fill="x", padx=10, pady=5)
-                ctk.CTkLabel(code_frame, text=code_content, font=("Consolas", self.font_size_chat - 1), text_color=self.C_TEXT, justify="left", wraplength=650).pack(padx=15, pady=15, anchor="w")
+                
+                code_bg = ctk.CTkFrame(content_frame, fg_color=self.C_CODE_BG, corner_radius=5)
+                code_bg.pack(fill="x", pady=5)
+                
+                c_head = ctk.CTkFrame(code_bg, fg_color="transparent", height=25)
+                c_head.pack(fill="x")
+                def copy_code(c=code_content):
+                    self.clipboard_clear()
+                    self.clipboard_append(c)
+                ctk.CTkButton(c_head, text="📋 Copy Code", width=60, height=20, fg_color="transparent", hover_color=self.C_BG_SIDEBAR, text_color=self.C_TEXT_MUTED, command=copy_code).pack(side="right", padx=5, pady=2)
+                
+                ctk.CTkLabel(code_bg, text=code_content, font=("Consolas", self.font_size_chat - 1), text_color=self.C_TEXT, justify="left", wraplength=650).pack(padx=15, pady=(0,15), anchor="w")
+                
+            elif (block.startswith("\\[") and block.endswith("\\]")) or (block.startswith("$$") and block.endswith("$$")):
+                latex_str = block[2:-2].strip()
+                math_container = ctk.CTkFrame(content_frame, fg_color="transparent")
+                math_container.pack(fill="x", pady=5)
+                loading_lbl = ctk.CTkLabel(math_container, text="[Rendering Math...]", text_color=self.C_TEXT_MUTED, font=("Arial", 12, "italic"))
+                loading_lbl.pack(pady=2)
+                
+                def load_math(container, loading_l, l_str):
+                    try:
+                        import matplotlib
+                        matplotlib.use('Agg')
+                        import matplotlib.pyplot as plt
+                        from matplotlib.backends.backend_agg import FigureCanvasAgg
+                        import io, re
+                        from PIL import Image
+                        
+                        plt.rcParams['mathtext.fontset'] = 'cm'
+                        
+                        l_str = re.sub(r"\\begin\{align\**\}", "", l_str)
+                        l_str = re.sub(r"\\end\{align\**\}", "", l_str)
+                        
+                        lines = [line.strip() for line in re.split(r'\\\\|\n', l_str) if line.strip()]
+                        rendered_images = []
+                        
+                        for line in lines:
+                            fig = plt.figure(figsize=(0.01, 0.01), dpi=120)
+                            fig.patch.set_alpha(0.0)
+                            try:
+                                text = fig.text(0, 0, f"${line}$", color='white', fontsize=14)
+                                canvas = FigureCanvasAgg(fig)
+                                canvas.draw()
+                                renderer = canvas.get_renderer()
+                                bbox = text.get_window_extent(renderer=renderer)
+                                fig.set_size_inches(bbox.width / fig.dpi, bbox.height / fig.dpi)
+                                canvas.draw()
+                                
+                                buf = io.BytesIO()
+                                fig.savefig(buf, format='png', transparent=True, bbox_inches='tight', pad_inches=0.1)
+                                plt.close(fig)
+                                buf.seek(0)
+                                img = Image.open(buf)
+                                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
+                                rendered_images.append(ctk_img)
+                            except:
+                                plt.close(fig)
+                                
+                        def _update_ui():
+                            loading_l.pack_forget()
+                            if not rendered_images:
+                                ctk.CTkLabel(container, text="[Math Render Failed]", text_color=self.C_TEXT_MUTED).pack()
+                            for c_img in rendered_images:
+                                l = ctk.CTkLabel(container, image=c_img, text="")
+                                l._ctk_img_ref = c_img
+                                l.pack(pady=2)
+                                
+                        container.after(0, _update_ui)
+                    except Exception as e:
+                        container.after(0, lambda: loading_l.configure(text="[Math Render Failed]"))
+                        
+                import threading
+                threading.Thread(target=load_math, args=(math_container, loading_lbl, latex_str), daemon=True).start()
+                
             else:
-                ctk.CTkLabel(bubble, text=block.strip(), font=("Arial", self.font_size_chat), text_color=self.C_TEXT, justify="left", wraplength=650).pack(anchor="w", padx=10, pady=5)
+                clean_text = block.strip()
+                clean_text = clean_text.replace("\\(", "").replace("\\)", "")
+                
+                # Basic unicode replacement for common math symbols in plain text
+                replacements = {
+                    "\\alpha": "α", "\\beta": "β", "\\gamma": "γ", "\\delta": "δ", "\\Delta": "Δ",
+                    "\\theta": "θ", "\\pi": "π", "\\mu": "μ", "\\sigma": "σ", "\\Sigma": "Σ",
+                    "\\omega": "ω", "\\Omega": "Ω", "\\infty": "∞", "\\approx": "≈", "\\neq": "≠",
+                    "\\leq": "≤", "\\geq": "≥", "\\times": "×", "\\cdot": "·", "\\pm": "±",
+                    "\\partial": "∂", "\\nabla": "∇", "\\sqrt": "√", "^2": "²", "^3": "³",
+                    "\\frac": ""
+                }
+                for k, v in replacements.items():
+                    clean_text = clean_text.replace(k, v)
+                    
+                try:
+                    import markdown
+                    from tkhtmlview import HTMLLabel
+                    html_content = markdown.markdown(clean_text)
+                    # Add inline CSS to ensure text color matches theme
+                    html_content = f"<div style='color: {self.C_TEXT[1]}; font-family: Arial; font-size: {self.font_size_chat}px;'>{html_content}</div>"
+                    html_lbl = HTMLLabel(content_frame, html=html_content, background=self.C_BG_MAIN[1], foreground=self.C_TEXT[1])
+                    html_lbl.pack(fill="x", pady=2)
+                    html_lbl.fit_height()
+                except Exception as e:
+                    print(f"Error rendering HTML: {e}")
+                    # Fallback if tkhtmlview is missing or errors
+                    clean_text = clean_text.replace("**", "")
+                    ctk.CTkLabel(content_frame, text=clean_text, font=("Arial", self.font_size_chat), text_color=self.C_TEXT, justify="left", wraplength=650).pack(anchor="w", pady=2)
                 
         self.chat_scroll._parent_canvas.yview_moveto(1.0)
 
@@ -594,14 +975,26 @@ class KurtApp(ctk.CTk):
         
         def process():
             context = self.rag.query_course(question, self.active_course)
-            answer = self.chat_engine.ask_tutor(
-                self.compiler.engine, 
-                self.compiler.active_model, 
-                self.compiler.api_key, 
-                question, 
-                context,
-                self.enable_web_search_var.get() 
-            )
+            
+            # Use new provider-aware chat engine if LLMConfig is set
+            if self.compiler.llm_config:
+                answer = self.chat_engine.ask_tutor(
+                    llm_config=self.compiler.llm_config,
+                    user_question=question,
+                    rag_context=context,
+                    enable_search=self.enable_web_search_var.get()
+                )
+            else:
+                # Fallback to legacy
+                answer = self.chat_engine.ask_tutor_legacy(
+                    self.compiler.engine, 
+                    self.compiler.active_model, 
+                    self.compiler.api_key, 
+                    question, 
+                    context,
+                    self.enable_web_search_var.get() 
+                )
+            
             self.after(0, lambda: self.render_chat_bubble("Kurt", answer))
             self.rag.ingest_chat_exchange(self.active_course, question, answer, self.log)
             
@@ -622,9 +1015,17 @@ class KurtApp(ctk.CTk):
         if path: threading.Thread(target=self._ingest_and_refresh, args=(path, False), daemon=True).start()
 
     def upload_image(self):
-        if not self.compiler.api_key:
-            messagebox.showerror("API Key Required", "Enter a Google Gemini API Key in Settings to parse visual data.")
+        # Check if we have a provider that supports vision (Gemini, GPT-4V, etc.)
+        provider = self.provider_var.get()
+        api_key = self.api_key_var.get()
+        
+        if provider in ["gemini", "openai", "custom"] and not api_key:
+            messagebox.showerror("API Key Required", f"Enter a {provider.capitalize()} API Key in Advanced Providers tab to parse visual data.")
             return
+        elif provider == "ollama":
+            messagebox.showerror("Not Supported", "Image parsing not supported with Ollama. Use Gemini, OpenAI, or custom endpoint.")
+            return
+            
         path = filedialog.askopenfilename(filetypes=[("Images/Graphs", "*.png *.jpg *.jpeg")])
         if path: threading.Thread(target=self._ingest_and_refresh, args=(path, True), daemon=True).start()
 
@@ -633,7 +1034,13 @@ class KurtApp(ctk.CTk):
         dest_path = os.path.join(self.cm.courses_dir, safe_course, "raw_files", os.path.basename(path))
         try:
             if path != dest_path: shutil.copy(path, dest_path)
-            if is_image: self.rag.ingest_image_via_gemini(dest_path, self.active_course, self.compiler.api_key, self.compiler.active_model, self.log)
+            if is_image: 
+                # Use new provider-aware image ingestion
+                provider = self.provider_var.get()
+                api_key = self.api_key_var.get()
+                model = self.model_var.get()
+                base_url = self.base_url_var.get()
+                self.rag.ingest_image(dest_path, self.active_course, provider, api_key, model, base_url, self.log)
             else: self.rag.ingest_document(dest_path, self.active_course, self.log)
             self.after(0, self.refresh_file_list)
             self.after(0, self.refresh_home_dashboard)
@@ -657,7 +1064,12 @@ class KurtApp(ctk.CTk):
             if "Header & Footer" in ui_vars["entries"]: self.compiler.custom_header = ui_vars["entries"]["Header & Footer"].get()
             if "Draft Watermark" in ui_vars["entries"]: self.compiler.custom_watermark = ui_vars["entries"]["Draft Watermark"].get()
 
-            if self.compiler.engine == "ollama":
+            # Update compiler with LLM config if available
+            if self.compiler.llm_config:
+                self.compiler.context_length = self.compiler.llm_config.context_length
+                self.compiler.keep_alive = self.compiler.llm_config.keep_alive
+                self.compiler.enable_web_search = self.enable_web_search_var.get()
+            elif self.compiler.engine == "ollama":
                 self.compiler.context_length = self.ctx_values[int(ui_vars["ctx"].get())]
                 self.compiler.keep_alive = self.keep_alive_map[ui_vars["keep"].get()]
 
@@ -692,8 +1104,10 @@ class KurtApp(ctk.CTk):
         finally: self.lbl_tps.configure(text="Speed: -- t/s")
 
     def log(self, text):
-        self.log_area.insert("end", f"{text}\n")
-        self.log_area.see("end")
+        def _insert():
+            self.log_area.insert("end", f"{text}\n")
+            self.log_area.see("end")
+        self.after(0, _insert)
 
 if __name__ == "__main__":
     app = KurtApp()

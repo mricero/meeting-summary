@@ -1,10 +1,20 @@
 import os
+from llm_providers import LLMProviderFactory, LLMConfig
 
 class ChatEngine:
     def __init__(self, log_callback):
         self.log = log_callback
 
-    def ask_tutor(self, engine, model_name, api_key, user_question, rag_context, enable_search=False):
+    def ask_tutor(self, llm_config: LLMConfig, user_question: str, rag_context: str, enable_search=False):
+        """
+        Ask the tutor a question using the configured LLM provider.
+        
+        Args:
+            llm_config: LLMConfig object with provider, model, api_key, etc.
+            user_question: The user's question
+            rag_context: Retrieved context from RAG
+            enable_search: Whether to enable web search (Gemini only for eligible models)
+        """
         system_prompt = (
             "You are Kurt, a brilliant, patient, and friendly university AI tutor. "
             "You are provided with 'Course Materials' retrieved from the student's database.\n\n"
@@ -16,46 +26,52 @@ class ChatEngine:
         )
 
         full_prompt = f"--- COURSE MATERIALS ---\n{rag_context}\n\n--- STUDENT QUESTION ---\n{user_question}"
-        self.log(f"[*] Asking Tutor ({engine.upper()} -> {model_name})...")
+        self.log(f"[*] Asking Tutor ({llm_config.provider.upper()} -> {llm_config.model})...")
         
         try:
-            if engine == "gemini":
-                from google import genai
-                from google.genai import types
-                client = genai.Client(api_key=api_key)
-                
-                config_dict = {
-                    "system_instruction": system_prompt,
-                    "temperature": 0.3
-                }
-                
-                # THE GATEKEEPER: Only allow search for 1.5, 2.0, and 2.5 Flash models
-                model_lower = model_name.lower()
-                is_eligible_flash = "flash" in model_lower and "gemini-3" not in model_lower
-                
-                if enable_search and is_eligible_flash:
-                    config_dict["tools"] = [{'google_search': {}}]
-                    self.log("[+] Live Google Search Grounding ENABLED.")
-                elif enable_search and not is_eligible_flash:
-                    self.log(f"[-] Search Grounding blocked: '{model_name}' does not support free search.")
-
-                response = client.models.generate_content(
-                    model=model_name, 
-                    contents=full_prompt,
-                    config=types.GenerateContentConfig(**config_dict)
-                )
-                return response.text
-            else:
-                import ollama
-                response = ollama.chat(
-                    model=model_name, 
-                    messages=[
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': full_prompt},
-                    ],
-                    options={"temperature": 0.3} 
-                )
-                return response['message']['content']
+            # Create provider instance
+            provider = LLMProviderFactory.create(llm_config, self.log)
+            
+            # Prepare messages
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": full_prompt}
+            ]
+            
+            # Configure generation parameters
+            kwargs = {
+                "temperature": 0.3,
+                "enable_search": enable_search and llm_config.provider.lower() == "gemini"
+            }
+            
+            # Add provider-specific options
+            if llm_config.provider.lower() == "ollama":
+                kwargs["num_ctx"] = llm_config.context_length
+                kwargs["keep_alive"] = llm_config.keep_alive
+            elif llm_config.provider.lower() in ["openai", "anthropic", "custom"]:
+                kwargs["max_tokens"] = llm_config.max_tokens
+            
+            response = provider.generate(messages, **kwargs)
+            return response
+            
         except Exception as e:
             self.log(f"[-] Tutor Engine Error: {e}")
             return f"Error connecting to AI: {e}"
+
+    # Backward compatibility method
+    def ask_tutor_legacy(self, engine, model_name, api_key, user_question, rag_context, enable_search=False):
+        """Legacy method for backward compatibility"""
+        # Map old engine names to new providers
+        provider_map = {
+            "ollama": "ollama",
+            "gemini": "gemini",
+        }
+        provider = provider_map.get(engine, "ollama")
+        
+        config = LLMConfig(
+            provider=provider,
+            model=model_name,
+            api_key=api_key,
+            temperature=0.3
+        )
+        return self.ask_tutor(config, user_question, rag_context, enable_search)

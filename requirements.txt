@@ -1,0 +1,15 @@
+customtkinter
+faster-whisper
+torch
+requests
+ollama
+google-genai
+langchain-chroma
+langchain-huggingface
+langchain-community
+langchain-text-splitters
+pymupdf
+openai
+anthropic
+sentence-transformers
+matplotlib
