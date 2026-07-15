@@ -1,5 +1,0 @@
-Fontconfig error: Cannot load default config file: No such file: (null)
-warning: algorithm.sty:11: 
-Invalid UTF-8 byte or sequence at line 11 replaced by U+FFFD.
-error: Quantum_mechanics_1_chem_2026-05-07_20-40-40.tex:21: You can't use `macro parameter character #' in vertical mode
-error: halted on potentially-recoverable error as specified
